@@ -1,3 +1,5 @@
+extensions [csv]
+
 globals[
   walker-vision-angle
   number-of-exits
@@ -12,6 +14,11 @@ globals[
   injury-threshold
   total-injured-walkers
   dd-count-threshold
+
+
+  ; localization accuracy values
+  camera-accuracy-testset1-accuracies
+
 ]
 breed [ distress-drones dd]
 breed [ helper-drones hd]
@@ -42,6 +49,7 @@ to-report exits
 end
 
 to setup
+  clear-output
   clear-all
   set walker-vision-angle 180
   set number-of-exits "one-exit"
@@ -63,6 +71,11 @@ to setup
   create-DD
   ; Introduce a HD in the space
   create-hidden-HD
+
+  ; test code
+  ; data file names
+  let three-meter-file "final_3_m_wifi_exp2.csv"
+  let val read-GPS-accuracy three-meter-file
 
   reset-ticks
   reset-timer  ;keep track of seconds in netlogo
@@ -119,7 +132,32 @@ to scan-dd
   if count distress-drones = 0 [
     stop  ; stop if there is no turtle left
   ]
+
 end
+
+
+to-report read-GPS-accuracy [file-name]
+  set camera-accuracy-testset1-accuracies csv:from-file file-name
+
+  ; Starting from index 0 in the file to avoid the header
+  let i 1
+  ; the list holds distance difference between ground truth (GT) GPS and estimated GPS is the accuracy in our case
+  let distance_diff []
+;  print  item 31 item 1 camera-accuracy-testset1-accuracies
+;  print  item 1 camera-accuracy-testset1-accuracies
+;  print  sublist camera-accuracy-testset1-accuracies 1 3
+
+    while [i < length camera-accuracy-testset1-accuracies] [
+      let column-item item 31 item i camera-accuracy-testset1-accuracies
+;      print column-item
+      set i (i + 1)
+      set distance_diff lput column-item distance_diff
+  ]
+  output-print distance_diff
+  output-print one-of distance_diff
+  report distance_diff
+end
+
 
 to introduce-HD
   ; introduce the HDs upon a button click
