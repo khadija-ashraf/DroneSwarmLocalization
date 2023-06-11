@@ -1,6 +1,39 @@
+extensions [csv]
+
 globals[
-  dd-count-threshold
   walker-vision-angle
+  number-of-exits
+  right-door-width
+  right-door-width-offset
+  deceleration
+  acceleration
+
+  collision
+  walker-per-patch
+
+  injury-threshold
+  total-injured-walkers
+  dd-count-threshold
+
+  ; localization accuracy values
+
+  ; WiFi localization real world datafile names
+  wifi-exp2-three-meter-file-name
+  wifi-exp2-five-meter-file-name
+  wifi-exp2-seven-meter-file-name
+  wifi-exp2-ten-meter-file-name
+  wifi-exp2-fifteen-meter-file-name
+
+  camera_resultset_3m
+  camera_resultset_5m
+  camera_resultset_7m
+  camera_resultset_10m
+  camera_resultset_15m
+
+  avg-localize-error
+  localized-dd-count
+  column-number
+
 ]
 breed [ distress-drones dd]
 breed [ helper-drones hd]
@@ -10,6 +43,13 @@ distress-drones-own [
   speed
   is-localized
   localization-error
+
+  waiting-time
+  speed-limit
+  speed-min
+
+  hit-count
+  injured
 ]
 
 helper-drones-own [
@@ -17,18 +57,34 @@ helper-drones-own [
   localized-dd-list
 ]
 
-patches-own [ exit path]
+patches-own [ popularity exit maximum-visited invisible path]
 
 to-report exits
   report patches with [exit  = true]
 end
 
 to setup
+  clear-output
   clear-all
+  set number-of-exits "one-exit"
+  set right-door-width 8
+  set right-door-width-offset 0
   set walker-vision-angle 180
 
+  initialize-env-setting
+
+  ask patches [
+    set path false
+  ]
   draw-path
-  ;  create-turtles dd-count
+  set dd-count-threshold count patches with [ path = true ]
+
+  if dd-count > dd-count-threshold
+  [
+    set dd-count  dd-count-threshold
+  ]
+  ;;;;;;;;;
+
   create-DD
   ; Introduce a HD in the space
   create-hidden-HD
@@ -42,39 +98,108 @@ to go
    hover
   ; TODO: start the scanning of HD to find DDs
 ;  scan-dd
-;  move-hd
-
   tick
+
+;  ;;;;;;;;;;; Stopping condition
+  if localized-dd-count = dd-count[
+    show avg-localize-error / (count distress-drones)
+    write "Total Elapsed Time :"
+    print timer
+    stop  ; stop if there is no turtle left
+  ]
+
+  if count distress-drones = 0 [
+    write "Total Elapsed Time :"
+    print timer
+    stop  ; stop if there is no turtle left
+  ]
+
 end
 
 to scan-dd
   ask helper-drones [
-    let visible-patches patches in-cone walker-vision-dist walker-vision-angle with [path != false]
-    if any? visible-patches[
-      set pcolor green
-    ]
-  ]
-end
 
-to move-hd
-  ask helper-drones [
-
+    let the-current-HD self  ; this is the current HD in the agentset 'helper-drones'
     ; Scanning-area: neighboring patches inside the area of vision-angle and vision-distance
+
     let neighboring-patchset patches in-cone walker-vision-dist walker-vision-angle with [path != false]
+
+    ask patch-here [ set pcolor 9]
 
     ; any distress drone found inside the scanning area
     let neighboring-dd (distress-drones-on neighboring-patchset)
 
-    print neighboring-dd
     ; any distress drone that is found inside the scanning area and not yet localized
     let neighboring-unlocalized-dd (neighboring-dd with [is-localized = false])
 
-    ifelse any? neighboring-unlocalized-dd[
-      print "found unlocalized dd"
+    ;;;;;;;;;;;;; https://stackoverflow.com/questions/22121703/nested-ask-referencing-different-breeds-in-netlogo
+    ; 'myself' refers to the agent that is calling the current agent (it's probably the most confusingly named primitive in NetLogo).
+    ; 'self' refers to the current agent. It looks like you're using 'myself' where you should be using 'self'.
+    ; However, [ some-variable ] of 'self' is the same as some-variable, so you rarely use 'self'.
+    ; NetLogo automatically figures out who's variable you're referring to from the context.
+
+    ifelse any? neighboring-unlocalized-dd[ ; found one or more unlocalized dd
+      let distances-btwn-HD-to-neigh-DDs [distance myself] of neighboring-unlocalized-dd
 
       ask neighboring-unlocalized-dd[
+        let the-current-DD self  ; this is the current DD in the agentset 'neighboring-unlocalized-dd'
         set color green
         set is-localized true
+
+        ;;;;;;;;TODO: once we localize a DD we setup a localization accuracy value to the DD
+        ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+        ; 'patch-distance-btwn-HD-DD' is the distance between the HD and DD when the DD is discovered and localized by the HD
+        ; the distance value can go upto the value of VISION_DISTANCE, not more than that. Because
+        ; in each scan a HD can only see/discover any DDs those are located within its VISION_DISTANCE range.
+        ; i.e., if VISION_DISTANCE = 3 then the distance will remain between ~0.0 to ~3.5 (approx).
+        ; We round up when decimal value is > 0.5 and floor down when decimal value is < 0.5
+
+        ;        show myself
+        ;        show self
+
+        let patch-distance-btwn-HD-DD [distance the-current-DD] of the-current-HD
+
+;        show "patch-distance-btwn-HD-DD"
+;        show patch-distance-btwn-HD-DD
+
+        ifelse ((patch-distance-btwn-HD-DD - (floor patch-distance-btwn-HD-DD)) >= 0.5 ) [
+          ; do a ceiling
+          set patch-distance-btwn-HD-DD ceiling patch-distance-btwn-HD-DD
+        ] [
+          ; do a floor
+          set patch-distance-btwn-HD-DD floor patch-distance-btwn-HD-DD
+          if (patch-distance-btwn-HD-DD = 0) [
+            set patch-distance-btwn-HD-DD 1
+          ]
+        ]
+
+;        show "patch-distance-btwn-HD-DD after truncate"
+;        show patch-distance-btwn-HD-DD
+
+        ; call a function to read the distance-group corresponding data file name
+        let file-name read-data-file-name patch-distance-btwn-HD-DD
+;        show "file-name:"
+;        show file-name
+
+        ; the list holds distance difference between ground truth (GT) GPS and estimated GPS.
+        ; This distance difference is the localization error in our case
+        let distance-diff-list read-GPS-accuracy file-name
+
+        ; Now that we have a list of accuracy values for a distance group,
+        ; we pick an accuracy value randomly from the, and avoid any invalid value
+        set localization-error 0
+        while [localization-error = "" or localization-error <= 0] [
+          set localization-error one-of distance-diff-list
+          show "Localization error:"
+          show localization-error
+        ]
+
+        set avg-localize-error  (avg-localize-error + localization-error)
+        set localized-dd-count (localized-dd-count + 1)
+;        die
+
+        ;;;;;;;;;;; Now set the localized DD move towards the destination
+;        move-walkers
       ]
     ][
       let random-heading random-float 360
@@ -86,7 +211,92 @@ to move-hd
       move-to-a-path-patch next-patch
     ]
   ]
+  if localized-dd-count = dd-count[
+    show avg-localize-error / (count distress-drones)
+    stop
+  ]
+
+;  if count distress-drones = 0 [
+;    ; once all the DDs of the entire search space are localized
+;    ; then we calculate our average localization error.
+;    show avg-localize-error / (count distress-drones)
+;
+;    stop  ; stop if there is no turtle left
+;  ]
+
 end
+
+to-report read-data-file-name [patch-distance-btwn-HD-DD]
+  let file-name ""
+
+  ; in this simulation scope, we map a single patch distance as 3 meters with our real world experiment,
+  ; similarly, 2 patches = 5, 3 patches = 7, 4 patches = 10, 5 patches= 15 meters.
+
+  ifelse (localization-mode = "WiFi Localization") [
+    (ifelse
+      (patch-distance-btwn-HD-DD = 1) [ set file-name wifi-exp2-three-meter-file-name]
+      (patch-distance-btwn-HD-DD = 2) [ set file-name wifi-exp2-five-meter-file-name]
+      (patch-distance-btwn-HD-DD = 3) [ set file-name wifi-exp2-seven-meter-file-name]
+      (patch-distance-btwn-HD-DD = 4) [ set file-name wifi-exp2-ten-meter-file-name]
+      (patch-distance-btwn-HD-DD = 5) [ set file-name wifi-exp2-fifteen-meter-file-name]
+    )
+    set column-number 31
+  ] [
+    (ifelse
+      (patch-distance-btwn-HD-DD = 1) [ set file-name camera_resultset_3m]
+      (patch-distance-btwn-HD-DD = 2) [ set file-name camera_resultset_5m]
+      (patch-distance-btwn-HD-DD = 3) [ set file-name camera_resultset_7m]
+      (patch-distance-btwn-HD-DD = 4) [ set file-name camera_resultset_10m]
+      (patch-distance-btwn-HD-DD = 5) [ set file-name camera_resultset_15m]
+    )
+    set column-number 24
+  ]
+  report file-name
+end
+
+to initialize-env-setting
+
+  ; setting vision_angle, data-file based on localization mode
+  ifelse (localization-mode = "Camera Localization") [
+    set walker-vision-angle 180
+
+    set camera_resultset_3m "camera_resultset_3m.csv"
+    set camera_resultset_5m "camera_resultset_5m.csv"
+    set camera_resultset_7m "camera_resultset_7m.csv"
+    set camera_resultset_10m "camera_resultset_10m.csv"
+    set camera_resultset_15m "camera_resultset_15m.csv"
+  ]
+  [
+    set walker-vision-angle 360
+
+    set wifi-exp2-three-meter-file-name "final_3_m_wifi_exp2.csv"
+    set wifi-exp2-five-meter-file-name "final_5_m_wifi_exp2.csv"
+    set wifi-exp2-seven-meter-file-name "final_7_m_wifi_exp2.csv"
+    set wifi-exp2-ten-meter-file-name "final_10_m_wifi_exp2.csv"
+    set wifi-exp2-fifteen-meter-file-name "final_15_m_wifi_exp2.csv"
+  ]
+end
+
+
+to-report read-GPS-accuracy [file-name]
+  let data-file csv:from-file file-name
+
+  ; Starting from index 1 in the file to avoid the header
+  let i 1
+
+  let distance-diff-list []
+;  print  item 31 item 1 camera-accuracy-testset1-accuracies
+;  print  item 1 camera-accuracy-testset1-accuracies
+;  print  sublist camera-accuracy-testset1-accuracies 1 3
+
+    while [i < length data-file] [
+      let column-item item column-number item i data-file
+      set i (i + 1)
+      set distance-diff-list lput column-item distance-diff-list
+  ]
+  report distance-diff-list
+end
+
 
 to introduce-HD
   ; introduce the HDs upon a button click
@@ -107,13 +317,12 @@ to hover
 end
 
 to move-to-a-path-patch [next-patch]
-  ifelse ([path] of next-patch) = true and not any? turtles-on next-patch [
+  ifelse next-patch != nobody and ([path] of next-patch) = true and not any? turtles-on next-patch [
       repeat 100 [
         fd speed / 100
       ]
   ] [rt heading + 180]
 end
-
 
 to create-hidden-HD
   ask one-of patches with [path = true] [
@@ -131,6 +340,7 @@ to create-DD
       set color blue
       set speed 1
       set is-localized false
+      set goal min-one-of exits [distance myself]
     ]
   ]
 end
@@ -142,6 +352,311 @@ to draw-path
     set path true
 	  set pcolor white
   ]
+
+;  if number-of-exits = "one-exit" [
+;    ; this block draws the right exit boundary of the ractangle of patches
+;    ask patches with [pxcor >= 13 and pxcor <= 16 and pycor >= (- right-door-width / 2) + right-door-width-offset and pycor <= ( right-door-width / 2) + right-door-width-offset] ; Change here
+;    [
+;      set path true
+;      set pcolor white
+;    ]
+;
+;    ; this block sets the exit flag true to the right exit patches
+;    ask patches with [pxcor = 16 and pycor >=  (- right-door-width / 2) + right-door-width-offset and pycor <= ( right-door-width / 2) + right-door-width-offset]
+;    [
+;      set exit true
+;      set pcolor red
+;    ]
+;  ]
+end
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+to move-walkers
+  ask distress-drones [
+    ifelse patch-here = goal [
+      face goal
+        repeat 100 [
+          fd speed / 100
+        ]
+      die
+    ] [
+      walk-towards-goal goal
+      set goal min-one-of exits [distance myself] ; keep updating the goal on each step
+    ]
+  ]
+end
+
+to walk-towards-goal [destination]
+  if maximum-visited != true [
+    ; boost the popularity of the patch we're on
+    ask patch-here [ become-more-popular ]
+  ]
+
+  let next-patch best-way-to destination
+  ;;;;;;;;;;;;;;;;;;;;;
+
+  let walker-ahead one-of turtles-on next-patch
+
+  let min-patch nobody
+  ifelse walker-ahead != nobody [
+    slow-down-car walker-ahead
+    ; try to turn to pass the blocker walker
+    let empty-neighbor-patches neighbors with [ path = true and  not any? distress-drones-here ]
+    ;let empty-neighbor-patches patches in-cone walker-vision-dist walker-vision-angle with [ path = true and  not any? walkers-here ]
+
+    set min-patch one-of empty-neighbor-patches
+    ;set  min-patch min-one-of empty-neighbor-patches [distance destination]
+
+  ]
+  [ ;; otherwise, speed up
+    speed-up-car
+  ]
+  if (min-patch != nobody) [
+    set next-patch min-patch
+
+    if speed = 0 [
+      set waiting-time waiting-time + 1
+    ]
+
+    if (waiting-time > 4) [
+      set speed speed-limit
+      set waiting-time 0
+    ]
+  ]
+  ;;;;;;;;;;;;;;;;;;;;;;
+
+  face next-patch
+  repeat 100 [
+    fd speed / 100
+  ]
+
+  ;keep track of collision
+  set walker-per-patch count distress-drones-here
+  if (walker-per-patch > 1) [
+    set collision collision + 1;
+    ;show walker-per-patch
+
+    ask distress-drones-here [
+      set hit-count hit-count + 1
+
+      if hit-count > injury-threshold [
+        set total-injured-walkers total-injured-walkers + 1
+        set hit-count -99
+
+      ]
+    ]
+  ]
+end
+
+to decay-popularity
+  ask patches with [ not any? distress-drones-here] [
+    set popularity popularity * (100 - popularity-decay-rate) / 100
+    ; when popularity is below 1, the patch becomes (or stays) grass
+    if popularity < 1 [ set  maximum-visited false ]
+    if path = false [
+      set  maximum-visited false
+    ]
+  ]
+end
+
+to become-more-popular
+  set popularity popularity + popularity-per-step
+  ; if the increase in popularity takes us above the threshold, become a route
+  if popularity >= max-visiting-threshold [ set  maximum-visited true ]
+end
+
+to slow-down-car [ car-ahead ] ;; turtle procedure
+  ;; slow down so you are driving more slowly than the car ahead of you
+  set speed [ speed ] of car-ahead - deceleration
+  if speed < speed-min [ set speed speed-min ]
+
+end
+
+
+to speed-up-car ;; turtle procedure
+  set speed speed + acceleration
+  if speed > speed-limit [ set speed speed-limit ]
+end
+
+
+to-report best-way-to [ destination ]
+
+  ; of all the visible route patches, select the ones
+  ; that would take me closer to my destination ; avoiding black patches as obstacles
+  ;ask patches in-radius walker-vision-dist with [path != false] [set pcolor red  ]
+  let next-patch nobody
+
+  let visible-patches patches in-cone walker-vision-dist walker-vision-angle with [path != false]
+
+  ; Proirity 1: select goal patches
+  let visible-routes visible-patches with [exit  = true]
+
+  ; Proirity 2: select maximum-visited patches
+  ; if none of the neighbours are exit patch then chose among all most-visited patches
+
+  if not any? visible-routes [
+    set visible-routes visible-patches with [maximum-visited = true]
+  ]
+
+  ; Proirity 3: select front, left or right patches
+  ; if no visited routes available then chose all white patches in the radius among the visible patches
+  ; and then prioritize the front one, if no front patch available then chose either right or left one randomly
+
+
+  let routes-that-take-me-closer  visible-routes with  [ invisible != true and
+    distance destination <= [ distance destination - 1 ] of myself
+  ]
+
+  if any? routes-that-take-me-closer with [invisible != true] [
+
+    set next-patch min-one-of routes-that-take-me-closer with [invisible != true] [ distance self ]
+
+    if check-if-patch-visible next-patch = false[
+      set next-patch  nobody
+    ]
+  ]
+
+  ; if no neighbor patch take me closer than randomly select left or right patch as next patch
+  if next-patch = nobody [
+    ;show "chosing next neighbor"
+    ;;;;;;;;;;;;;;;;;;;;;; start select white-patch
+
+    let front-patch nobody
+    let left-patch nobody
+    let right-patch nobody
+    let corner-patch1 nobody
+    let corner-patch2 nobody
+
+    if patch-ahead 1 != nobody and [path] of patch-ahead 1 = true[
+      ;ask patch-ahead 1 [ set pcolor sky ]
+      set front-patch patch-ahead 1
+    ]
+    if patch-left-and-ahead 90 1 != nobody and [path] of patch-left-and-ahead 90 1 = true [
+      set left-patch patch-left-and-ahead 90 1
+    ]
+
+    if patch-right-and-ahead 90 1 != nobody and [path] of patch-right-and-ahead 90 1 = true [
+      set right-patch patch-right-and-ahead 90 1
+    ]
+
+    if patch-at-heading-and-distance (heading + 45) 1 != nobody and [path] of patch-at-heading-and-distance (heading + 45) 1 = true [
+      set corner-patch1 patch-at-heading-and-distance (heading + 45) 1
+    ]
+
+    if patch-at-heading-and-distance (heading - 45) 1 != nobody and [path] of patch-at-heading-and-distance (heading - 45) 1 = true [
+      set corner-patch2 patch-at-heading-and-distance (heading - 45) 1
+    ]
+
+    if check-if-patch-visible front-patch = false [
+      set front-patch  nobody
+    ]
+    if check-if-patch-visible left-patch = false [
+      set left-patch  nobody
+    ]
+    if check-if-patch-visible right-patch = false [
+      set right-patch  nobody
+    ]
+
+    if check-if-patch-visible corner-patch1 = false [
+      set corner-patch1  nobody
+    ]
+    if check-if-patch-visible corner-patch2 = false [
+      set corner-patch2  nobody
+    ]
+
+
+
+    let min-patch min-one-of (patch-set front-patch left-patch right-patch corner-patch1 corner-patch2) [distance destination]
+
+    set next-patch min-patch
+  ]
+
+  if next-patch = nobody [
+    set next-patch destination
+  ]
+  report next-patch
+
+end
+
+to-report check-if-patch-visible [next-patch]
+  let is-visible true
+
+  ifelse next-patch != nobody [
+    let is-diagonal-patches false
+
+    ; otherwise, from those route patches, choose the one that is the closest to me
+
+    ; find out the delta-x and delta-y from the (x,y) coordinate of current patch (patch-here) and the next-patch
+    let currX pxcor
+    let currY pycor
+
+    let nextX [pxcor] of next-patch
+    let nextY [pycor] of next-patch
+
+    let deltaX  nextX - currX
+    let deltaY  nextY - currY
+
+    if deltaX != 0 and deltaY != 0 [
+      set is-diagonal-patches true
+    ]
+
+    if is-diagonal-patches [
+
+      let is-right false
+      let is-left false
+      let is-down false
+      let is-up false
+
+      ifelse deltaX > 0 [  ; next-patch is on right
+                           ; keep adding 1 go the currX get the nextX
+
+        set is-right true
+
+      ] [ ; next-patch is on left
+          ; keep subtracting 1 go the currX get the nextX
+
+        set is-left true
+      ]
+
+      ifelse deltaY > 0 [ ; next-patch is on top
+                          ; keep subtracting 1 go the currY get the nextY
+
+        set is-down true
+      ] [ ; next-patch is on bottom
+          ; keep adding 1 go the currY get the nextY
+
+        set is-up true
+      ]
+
+      let adjacentX currX
+      let adjacentY currY
+
+      if (is-right and is-down) [
+        set adjacentX currX + 1
+        set adjacentY nextY - 1
+      ]
+      if (is-left and is-down) [
+        set adjacentX currX - 1
+        set adjacentY nextY - 1
+      ]
+      if (is-right and is-up) [
+        set adjacentX currX + 1
+        set adjacentY nextY + 1
+
+      ]
+      if (is-left and is-up) [
+        set adjacentX currX - 1
+        set adjacentY nextY + 1
+      ]
+
+      if ([path] of patch adjacentX currY = false or [path] of patch nextX adjacentY = false)  [
+        set is-visible false
+      ]
+    ]
+  ] [
+    set is-visible false
+  ]
+  report is-visible
 end
 @#$#@#$#@
 GRAPHICS-WINDOW
@@ -214,17 +729,17 @@ dd-count
 dd-count
 5
 100
-5.0
+6.0
 1
 1
 NIL
 HORIZONTAL
 
 BUTTON
-44
-177
-148
-210
+47
+156
+151
+189
 NIL
 introduce-HD
 NIL
@@ -238,14 +753,14 @@ NIL
 1
 
 SLIDER
-20
-285
-192
-318
+13
+337
+185
+370
 walker-vision-dist
 walker-vision-dist
 0
-10
+5
 2.0
 1
 1
@@ -253,12 +768,12 @@ NIL
 HORIZONTAL
 
 BUTTON
-66
-232
-146
-265
+58
+215
+138
+248
 NIL
-move-hd\n
+scan-dd\n
 T
 1
 T
@@ -267,6 +782,61 @@ NIL
 NIL
 NIL
 NIL
+1
+
+SLIDER
+11
+391
+183
+424
+popularity-decay-rate
+popularity-decay-rate
+0
+100
+100.0
+1
+1
+NIL
+HORIZONTAL
+
+SLIDER
+10
+436
+182
+469
+popularity-per-step
+popularity-per-step
+0
+100
+21.0
+1
+1
+NIL
+HORIZONTAL
+
+SLIDER
+11
+479
+183
+512
+max-visiting-threshold
+max-visiting-threshold
+0
+100
+78.0
+1
+1
+NIL
+HORIZONTAL
+
+CHOOSER
+17
+277
+175
+322
+localization-mode
+localization-mode
+"WiFi Localization" "Camera Localization"
 1
 
 @#$#@#$#@
