@@ -34,6 +34,9 @@ globals[
   localized-dd-count
   column-number
 
+  total-patchs-traveled
+  total-pairing-count
+
 ]
 breed [ distress-drones dd]
 breed [ helper-drones hd]
@@ -64,6 +67,7 @@ to-report exits
 end
 
 to setup
+  ca
   clear-output
   clear-all
   set number-of-exits "one-exit"
@@ -97,14 +101,17 @@ to go
   ; DDs hovering in the search space
    hover
   ; TODO: start the scanning of HD to find DDs
-;  scan-dd
+  scan-dd
   tick
 
 ;  ;;;;;;;;;;; Stopping condition
   if localized-dd-count = dd-count[
-    show avg-localize-error / (count distress-drones)
-    write "Total Elapsed Time :"
-    print timer
+;    show avg-localize-error / (count distress-drones)
+    show get-avg-localize-error
+    show get-total-patchs-traveled
+    show get-total-pairing-count
+;    write "Total Elapsed Time :"
+;    print timer
     stop  ; stop if there is no turtle left
   ]
 
@@ -114,6 +121,18 @@ to go
 ;    stop  ; stop if there is no turtle left
 ;  ]
 
+end
+
+to-report get-avg-localize-error
+  report avg-localize-error / (count distress-drones)
+end
+
+to-report get-total-patchs-traveled
+  report total-patchs-traveled
+end
+
+to-report get-total-pairing-count
+  report total-pairing-count + 1
 end
 
 to scan-dd
@@ -139,6 +158,7 @@ to scan-dd
     ; NetLogo automatically figures out who's variable you're referring to from the context.
 
     ifelse any? neighboring-unlocalized-dd[ ; found one or more unlocalized dd
+      set total-pairing-count (total-pairing-count + 1)
       let distances-btwn-HD-to-neigh-DDs [distance myself] of neighboring-unlocalized-dd
 
       ask neighboring-unlocalized-dd[
@@ -190,8 +210,8 @@ to scan-dd
         set localization-error 0
         while [localization-error = "" or localization-error <= 0] [
           set localization-error one-of distance-diff-list
-          show "Localization error:"
-          show localization-error
+;          show "Localization error:"
+;          show localization-error
         ]
 
         set avg-localize-error  (avg-localize-error + localization-error)
@@ -208,13 +228,13 @@ to scan-dd
       let next-patch patch-ahead 1
 ;      face next-patch
       ; moves to the next patch only if it is a path patch
-      move-to-a-path-patch next-patch
+      hd-move-to-a-path-patch next-patch
     ]
   ]
-  if localized-dd-count = dd-count[
-    show avg-localize-error / (count distress-drones)
-    stop
-  ]
+;  if localized-dd-count = dd-count[
+;    show avg-localize-error / (count distress-drones)
+;    stop
+;  ]
 
 ;  if count distress-drones = 0 [
 ;    ; once all the DDs of the entire search space are localized
@@ -225,6 +245,7 @@ to scan-dd
 ;  ]
 
 end
+
 
 to-report read-data-file-name [patch-distance-btwn-HD-DD]
   let file-name ""
@@ -316,6 +337,16 @@ to hover
   ]
 end
 
+to hd-move-to-a-path-patch [next-patch]
+  ifelse next-patch != nobody and ([path] of next-patch) = true and not any? turtles-on next-patch [
+    set total-patchs-traveled  (total-patchs-traveled + 1)
+    repeat 100 [
+        fd speed / 100
+      ]
+  ] [rt heading + 45]
+end
+
+
 to move-to-a-path-patch [next-patch]
   ifelse next-patch != nobody and ([path] of next-patch) = true and not any? turtles-on next-patch [
       repeat 100 [
@@ -327,7 +358,7 @@ end
 to create-hidden-HD
   ask one-of patches with [path = true] [
     sprout-helper-drones 1 [
-      set hidden? true
+;      set hidden? true
       set color red
       set speed 1
     ]
@@ -371,293 +402,6 @@ to draw-path
 end
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-to move-walkers
-  ask distress-drones [
-    ifelse patch-here = goal [
-      face goal
-        repeat 100 [
-          fd speed / 100
-        ]
-      die
-    ] [
-      walk-towards-goal goal
-      set goal min-one-of exits [distance myself] ; keep updating the goal on each step
-    ]
-  ]
-end
-
-to walk-towards-goal [destination]
-  if maximum-visited != true [
-    ; boost the popularity of the patch we're on
-    ask patch-here [ become-more-popular ]
-  ]
-
-  let next-patch best-way-to destination
-  ;;;;;;;;;;;;;;;;;;;;;
-
-  let walker-ahead one-of turtles-on next-patch
-
-  let min-patch nobody
-  ifelse walker-ahead != nobody [
-    slow-down-car walker-ahead
-    ; try to turn to pass the blocker walker
-    let empty-neighbor-patches neighbors with [ path = true and  not any? distress-drones-here ]
-    ;let empty-neighbor-patches patches in-cone walker-vision-dist walker-vision-angle with [ path = true and  not any? walkers-here ]
-
-    set min-patch one-of empty-neighbor-patches
-    ;set  min-patch min-one-of empty-neighbor-patches [distance destination]
-
-  ]
-  [ ;; otherwise, speed up
-    speed-up-car
-  ]
-  if (min-patch != nobody) [
-    set next-patch min-patch
-
-    if speed = 0 [
-      set waiting-time waiting-time + 1
-    ]
-
-    if (waiting-time > 4) [
-      set speed speed-limit
-      set waiting-time 0
-    ]
-  ]
-  ;;;;;;;;;;;;;;;;;;;;;;
-
-  face next-patch
-  repeat 100 [
-    fd speed / 100
-  ]
-
-  ;keep track of collision
-  set walker-per-patch count distress-drones-here
-  if (walker-per-patch > 1) [
-    set collision collision + 1;
-    ;show walker-per-patch
-
-    ask distress-drones-here [
-      set hit-count hit-count + 1
-
-      if hit-count > injury-threshold [
-        set total-injured-walkers total-injured-walkers + 1
-        set hit-count -99
-
-      ]
-    ]
-  ]
-end
-
-to decay-popularity
-  ask patches with [ not any? distress-drones-here] [
-    set popularity popularity * (100 - popularity-decay-rate) / 100
-    ; when popularity is below 1, the patch becomes (or stays) grass
-    if popularity < 1 [ set  maximum-visited false ]
-    if path = false [
-      set  maximum-visited false
-    ]
-  ]
-end
-
-to become-more-popular
-  set popularity popularity + popularity-per-step
-  ; if the increase in popularity takes us above the threshold, become a route
-  if popularity >= max-visiting-threshold [ set  maximum-visited true ]
-end
-
-to slow-down-car [ car-ahead ] ;; turtle procedure
-  ;; slow down so you are driving more slowly than the car ahead of you
-  set speed [ speed ] of car-ahead - deceleration
-  if speed < speed-min [ set speed speed-min ]
-
-end
-
-
-to speed-up-car ;; turtle procedure
-  set speed speed + acceleration
-  if speed > speed-limit [ set speed speed-limit ]
-end
-
-
-to-report best-way-to [ destination ]
-
-  ; of all the visible route patches, select the ones
-  ; that would take me closer to my destination ; avoiding black patches as obstacles
-  ;ask patches in-radius walker-vision-dist with [path != false] [set pcolor red  ]
-  let next-patch nobody
-
-  let visible-patches patches in-cone walker-vision-dist walker-vision-angle with [path != false]
-
-  ; Proirity 1: select goal patches
-  let visible-routes visible-patches with [exit  = true]
-
-  ; Proirity 2: select maximum-visited patches
-  ; if none of the neighbours are exit patch then chose among all most-visited patches
-
-  if not any? visible-routes [
-    set visible-routes visible-patches with [maximum-visited = true]
-  ]
-
-  ; Proirity 3: select front, left or right patches
-  ; if no visited routes available then chose all white patches in the radius among the visible patches
-  ; and then prioritize the front one, if no front patch available then chose either right or left one randomly
-
-
-  let routes-that-take-me-closer  visible-routes with  [ invisible != true and
-    distance destination <= [ distance destination - 1 ] of myself
-  ]
-
-  if any? routes-that-take-me-closer with [invisible != true] [
-
-    set next-patch min-one-of routes-that-take-me-closer with [invisible != true] [ distance self ]
-
-    if check-if-patch-visible next-patch = false[
-      set next-patch  nobody
-    ]
-  ]
-
-  ; if no neighbor patch take me closer than randomly select left or right patch as next patch
-  if next-patch = nobody [
-    ;show "chosing next neighbor"
-    ;;;;;;;;;;;;;;;;;;;;;; start select white-patch
-
-    let front-patch nobody
-    let left-patch nobody
-    let right-patch nobody
-    let corner-patch1 nobody
-    let corner-patch2 nobody
-
-    if patch-ahead 1 != nobody and [path] of patch-ahead 1 = true[
-      ;ask patch-ahead 1 [ set pcolor sky ]
-      set front-patch patch-ahead 1
-    ]
-    if patch-left-and-ahead 90 1 != nobody and [path] of patch-left-and-ahead 90 1 = true [
-      set left-patch patch-left-and-ahead 90 1
-    ]
-
-    if patch-right-and-ahead 90 1 != nobody and [path] of patch-right-and-ahead 90 1 = true [
-      set right-patch patch-right-and-ahead 90 1
-    ]
-
-    if patch-at-heading-and-distance (heading + 45) 1 != nobody and [path] of patch-at-heading-and-distance (heading + 45) 1 = true [
-      set corner-patch1 patch-at-heading-and-distance (heading + 45) 1
-    ]
-
-    if patch-at-heading-and-distance (heading - 45) 1 != nobody and [path] of patch-at-heading-and-distance (heading - 45) 1 = true [
-      set corner-patch2 patch-at-heading-and-distance (heading - 45) 1
-    ]
-
-    if check-if-patch-visible front-patch = false [
-      set front-patch  nobody
-    ]
-    if check-if-patch-visible left-patch = false [
-      set left-patch  nobody
-    ]
-    if check-if-patch-visible right-patch = false [
-      set right-patch  nobody
-    ]
-
-    if check-if-patch-visible corner-patch1 = false [
-      set corner-patch1  nobody
-    ]
-    if check-if-patch-visible corner-patch2 = false [
-      set corner-patch2  nobody
-    ]
-
-
-
-    let min-patch min-one-of (patch-set front-patch left-patch right-patch corner-patch1 corner-patch2) [distance destination]
-
-    set next-patch min-patch
-  ]
-
-  if next-patch = nobody [
-    set next-patch destination
-  ]
-  report next-patch
-
-end
-
-to-report check-if-patch-visible [next-patch]
-  let is-visible true
-
-  ifelse next-patch != nobody [
-    let is-diagonal-patches false
-
-    ; otherwise, from those route patches, choose the one that is the closest to me
-
-    ; find out the delta-x and delta-y from the (x,y) coordinate of current patch (patch-here) and the next-patch
-    let currX pxcor
-    let currY pycor
-
-    let nextX [pxcor] of next-patch
-    let nextY [pycor] of next-patch
-
-    let deltaX  nextX - currX
-    let deltaY  nextY - currY
-
-    if deltaX != 0 and deltaY != 0 [
-      set is-diagonal-patches true
-    ]
-
-    if is-diagonal-patches [
-
-      let is-right false
-      let is-left false
-      let is-down false
-      let is-up false
-
-      ifelse deltaX > 0 [  ; next-patch is on right
-                           ; keep adding 1 go the currX get the nextX
-
-        set is-right true
-
-      ] [ ; next-patch is on left
-          ; keep subtracting 1 go the currX get the nextX
-
-        set is-left true
-      ]
-
-      ifelse deltaY > 0 [ ; next-patch is on top
-                          ; keep subtracting 1 go the currY get the nextY
-
-        set is-down true
-      ] [ ; next-patch is on bottom
-          ; keep adding 1 go the currY get the nextY
-
-        set is-up true
-      ]
-
-      let adjacentX currX
-      let adjacentY currY
-
-      if (is-right and is-down) [
-        set adjacentX currX + 1
-        set adjacentY nextY - 1
-      ]
-      if (is-left and is-down) [
-        set adjacentX currX - 1
-        set adjacentY nextY - 1
-      ]
-      if (is-right and is-up) [
-        set adjacentX currX + 1
-        set adjacentY nextY + 1
-
-      ]
-      if (is-left and is-up) [
-        set adjacentX currX - 1
-        set adjacentY nextY + 1
-      ]
-
-      if ([path] of patch adjacentX currY = false or [path] of patch nextX adjacentY = false)  [
-        set is-visible false
-      ]
-    ]
-  ] [
-    set is-visible false
-  ]
-  report is-visible
-end
 @#$#@#$#@
 GRAPHICS-WINDOW
 210
@@ -729,7 +473,7 @@ dd-count
 dd-count
 5
 100
-6.0
+15.0
 1
 1
 NIL
@@ -761,7 +505,7 @@ walker-vision-dist
 walker-vision-dist
 0
 5
-2.0
+5.0
 1
 1
 NIL
@@ -784,51 +528,6 @@ NIL
 NIL
 1
 
-SLIDER
-11
-391
-183
-424
-popularity-decay-rate
-popularity-decay-rate
-0
-100
-100.0
-1
-1
-NIL
-HORIZONTAL
-
-SLIDER
-10
-436
-182
-469
-popularity-per-step
-popularity-per-step
-0
-100
-21.0
-1
-1
-NIL
-HORIZONTAL
-
-SLIDER
-11
-479
-183
-512
-max-visiting-threshold
-max-visiting-threshold
-0
-100
-78.0
-1
-1
-NIL
-HORIZONTAL
-
 CHOOSER
 17
 277
@@ -837,7 +536,7 @@ CHOOSER
 localization-mode
 localization-mode
 "WiFi Localization" "Camera Localization"
-1
+0
 
 @#$#@#$#@
 ## WHAT IS IT?
@@ -1189,24 +888,113 @@ NetLogo 6.2.2
   <experiment name="experiment" repetitions="1" runMetricsEveryStep="true">
     <setup>setup</setup>
     <go>go</go>
-    <metric>count turtles</metric>
+    <metric>get-avg-localize-error</metric>
     <enumeratedValueSet variable="localization-mode">
       <value value="&quot;Camera Localization&quot;"/>
+      <value value="&quot;WiFi Localization&quot;"/>
     </enumeratedValueSet>
     <enumeratedValueSet variable="walker-vision-dist">
+      <value value="1"/>
       <value value="2"/>
-    </enumeratedValueSet>
-    <enumeratedValueSet variable="popularity-decay-rate">
-      <value value="100"/>
-    </enumeratedValueSet>
-    <enumeratedValueSet variable="popularity-per-step">
-      <value value="21"/>
+      <value value="3"/>
+      <value value="4"/>
+      <value value="5"/>
     </enumeratedValueSet>
     <enumeratedValueSet variable="dd-count">
-      <value value="6"/>
+      <value value="5"/>
+      <value value="10"/>
+      <value value="15"/>
+      <value value="20"/>
     </enumeratedValueSet>
-    <enumeratedValueSet variable="max-visiting-threshold">
-      <value value="78"/>
+  </experiment>
+  <experiment name="experiment-timer" repetitions="1" runMetricsEveryStep="true">
+    <setup>setup</setup>
+    <go>go</go>
+    <metric>timer</metric>
+    <enumeratedValueSet variable="localization-mode">
+      <value value="&quot;Camera Localization&quot;"/>
+      <value value="&quot;WiFi Localization&quot;"/>
+    </enumeratedValueSet>
+    <enumeratedValueSet variable="walker-vision-dist">
+      <value value="1"/>
+      <value value="2"/>
+      <value value="3"/>
+      <value value="4"/>
+      <value value="5"/>
+    </enumeratedValueSet>
+    <enumeratedValueSet variable="dd-count">
+      <value value="5"/>
+      <value value="10"/>
+      <value value="15"/>
+      <value value="20"/>
+    </enumeratedValueSet>
+  </experiment>
+  <experiment name="experiment-patch-traveled" repetitions="1" runMetricsEveryStep="true">
+    <setup>setup</setup>
+    <go>go</go>
+    <metric>get-total-patchs-traveled</metric>
+    <enumeratedValueSet variable="localization-mode">
+      <value value="&quot;Camera Localization&quot;"/>
+      <value value="&quot;WiFi Localization&quot;"/>
+    </enumeratedValueSet>
+    <enumeratedValueSet variable="walker-vision-dist">
+      <value value="1"/>
+      <value value="2"/>
+      <value value="3"/>
+      <value value="4"/>
+      <value value="5"/>
+    </enumeratedValueSet>
+    <enumeratedValueSet variable="dd-count">
+      <value value="5"/>
+      <value value="10"/>
+      <value value="15"/>
+      <value value="20"/>
+    </enumeratedValueSet>
+  </experiment>
+  <experiment name="experiment-pairing-count" repetitions="1" runMetricsEveryStep="true">
+    <setup>setup</setup>
+    <go>go</go>
+    <metric>get-total-pairing-count</metric>
+    <enumeratedValueSet variable="localization-mode">
+      <value value="&quot;Camera Localization&quot;"/>
+      <value value="&quot;WiFi Localization&quot;"/>
+    </enumeratedValueSet>
+    <enumeratedValueSet variable="walker-vision-dist">
+      <value value="1"/>
+      <value value="2"/>
+      <value value="3"/>
+      <value value="4"/>
+      <value value="5"/>
+    </enumeratedValueSet>
+    <enumeratedValueSet variable="dd-count">
+      <value value="5"/>
+      <value value="10"/>
+      <value value="15"/>
+      <value value="20"/>
+    </enumeratedValueSet>
+  </experiment>
+  <experiment name="experiment-error-patch-pairing" repetitions="4" runMetricsEveryStep="true">
+    <setup>setup</setup>
+    <go>go</go>
+    <metric>get-avg-localize-error</metric>
+    <metric>get-total-patchs-traveled</metric>
+    <metric>get-total-pairing-count</metric>
+    <enumeratedValueSet variable="localization-mode">
+      <value value="&quot;Camera Localization&quot;"/>
+      <value value="&quot;WiFi Localization&quot;"/>
+    </enumeratedValueSet>
+    <enumeratedValueSet variable="walker-vision-dist">
+      <value value="1"/>
+      <value value="2"/>
+      <value value="3"/>
+      <value value="4"/>
+      <value value="5"/>
+    </enumeratedValueSet>
+    <enumeratedValueSet variable="dd-count">
+      <value value="5"/>
+      <value value="10"/>
+      <value value="15"/>
+      <value value="20"/>
     </enumeratedValueSet>
   </experiment>
 </experiments>
