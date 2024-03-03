@@ -141,7 +141,7 @@ to scan-dd
     let the-current-HD self  ; this is the current HD in the agentset 'helper-drones'
     ; Scanning-area: neighboring patches inside the area of vision-angle and vision-distance
 
-    let neighboring-patchset patches in-cone walker-vision-dist walker-vision-angle with [path != false]
+    let neighboring-patchset patches in-cone HD-vision-dist walker-vision-angle with [path != false]
 
     ask patch-here [ set pcolor 9]
 
@@ -473,7 +473,7 @@ dd-count
 dd-count
 5
 100
-15.0
+5.0
 1
 1
 NIL
@@ -501,8 +501,8 @@ SLIDER
 337
 185
 370
-walker-vision-dist
-walker-vision-dist
+HD-vision-dist
+HD-vision-dist
 0
 5
 5.0
@@ -974,6 +974,30 @@ NetLogo 6.2.2
     </enumeratedValueSet>
   </experiment>
   <experiment name="experiment-error-patch-pairing" repetitions="4" runMetricsEveryStep="true">
+    <setup>setup</setup>
+    <go>go</go>
+    <metric>get-avg-localize-error</metric>
+    <metric>get-total-patchs-traveled</metric>
+    <metric>get-total-pairing-count</metric>
+    <enumeratedValueSet variable="localization-mode">
+      <value value="&quot;Camera Localization&quot;"/>
+      <value value="&quot;WiFi Localization&quot;"/>
+    </enumeratedValueSet>
+    <enumeratedValueSet variable="walker-vision-dist">
+      <value value="1"/>
+      <value value="2"/>
+      <value value="3"/>
+      <value value="4"/>
+      <value value="5"/>
+    </enumeratedValueSet>
+    <enumeratedValueSet variable="dd-count">
+      <value value="5"/>
+      <value value="10"/>
+      <value value="15"/>
+      <value value="20"/>
+    </enumeratedValueSet>
+  </experiment>
+  <experiment name="experiment-error-patch-pairing-rep10" repetitions="10" runMetricsEveryStep="true">
     <setup>setup</setup>
     <go>go</go>
     <metric>get-avg-localize-error</metric>
